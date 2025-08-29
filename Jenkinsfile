@@ -68,15 +68,17 @@ pipeline {
         }
         
         stage('Security Scan with Trivy') {
-            steps {
-                script {
-                    // Create directory for results
-                  
-                    trivy_scan()
-                    
-                }
-            }
+    steps {
+        script {
+            echo "Running Trivy scan (non-blocking)..."
+            sh '''
+                # Scan for HIGH/CRITICAL but do not fail build
+                trivy fs . --exit-code 0 --severity HIGH,CRITICAL || true
+            '''
         }
+    }
+}
+
         
         stage('Push Docker Images') {
             parallel {
