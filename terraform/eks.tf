@@ -1,15 +1,20 @@
+############################################################
+# SECURITY GROUP FOR NODE GROUP REMOTE ACCESS
+############################################################
 resource "aws_security_group" "node_group_remote_access" {
-  name   = "allow HTTP"
+  name   = "allow-ssh"
   vpc_id = module.vpc.vpc_id
+
   ingress {
-    description = "port 22 allow"
+    description = "Allow SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
   egress {
-    description = " allow all outgoing traffic "
+    description = "Allow all outgoing traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -17,8 +22,10 @@ resource "aws_security_group" "node_group_remote_access" {
   }
 }
 
+############################################################
+# EKS CLUSTER MODULE
+############################################################
 module "eks" {
-
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.0"
 
@@ -27,14 +34,28 @@ module "eks" {
   cluster_endpoint_public_access  = false
   cluster_endpoint_private_access = true
 
-  //access entry for any specific user or role (jenkins controller instance)
+  ##########################################################
+  # ACCESS ENTRIES (ROOT + TERRAFORM IAM USER)
+  ##########################################################
   access_entries = {
-    # One access entry with a policy associated
-    example = {
+    terraform = {
       principal_arn = "arn:aws:iam::876997124628:user/terraform"
 
       policy_associations = {
-        example = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+
+    root = {
+      principal_arn = "arn:aws:iam::460722568558:root"
+
+      policy_associations = {
+        admin = {
           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
           access_scope = {
             type = "cluster"
@@ -44,11 +65,13 @@ module "eks" {
     }
   }
 
-
+  ##########################################################
+  # CLUSTER SECURITY GROUP RULES
+  ##########################################################
   cluster_security_group_additional_rules = {
     access_for_bastion_jenkins_hosts = {
       cidr_blocks = ["0.0.0.0/0"]
-      description = "Allow all HTTPS traffic from jenkins and Bastion host"
+      description = "Allow all HTTPS traffic from Jenkins and Bastion host"
       from_port   = 443
       to_port     = 443
       protocol    = "tcp"
@@ -56,7 +79,9 @@ module "eks" {
     }
   }
 
-
+  ##########################################################
+  # ADDONS
+  ##########################################################
   cluster_addons = {
     coredns = {
       most_recent = true
@@ -69,24 +94,25 @@ module "eks" {
     }
   }
 
+  ##########################################################
+  # VPC CONFIG
+  ##########################################################
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.private_subnets
 
-  # EKS Managed Node Group(s)
-
+  ##########################################################
+  # NODE GROUP DEFAULTS
+  ##########################################################
   eks_managed_node_group_defaults = {
-
     instance_types = ["t3.large"]
-
     attach_cluster_primary_security_group = true
-
   }
 
-
-
+  ##########################################################
+  # NODE GROUP DEFINITION
+  ##########################################################
   eks_managed_node_groups = {
-
     tws-demo-ng = {
       min_size     = 1
       max_size     = 3
@@ -99,7 +125,7 @@ module "eks" {
       use_custom_launch_template = false # Important to apply disk size!
 
       remote_access = {
-        ec2_ssh_key               = resource.aws_key_pair.deployer.key_name
+        ec2_ssh_key               = aws_key_pair.deployer.key_name
         source_security_group_ids = [aws_security_group.node_group_remote_access.id]
       }
 
@@ -112,10 +138,11 @@ module "eks" {
   }
 
   tags = local.tags
-
-
 }
 
+############################################################
+# GET EKS NODE INSTANCES
+############################################################
 data "aws_instances" "eks_nodes" {
   instance_tags = {
     "eks:cluster-name" = module.eks.cluster_name
